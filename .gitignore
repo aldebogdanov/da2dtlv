@@ -12,6 +12,9 @@ pom.xml.asc
 .hgignore
 .hg/
 
+.DS_Store
+
 .emacs.desktop
+.emacs.desktop.lock
 #*#
 *~
