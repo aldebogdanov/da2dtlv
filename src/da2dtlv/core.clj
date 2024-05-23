@@ -68,16 +68,21 @@
       a
       (let [a' (conj a (->> (first d)
                             (map (fn [[k v]]
-                                   (if (and (map? v) (contains? v :db/id))
+                                   (cond
+                                     (and (map? v) (contains? v :db/id))
                                      [k (:db/id v)]
-                                     [k v])))
+
+                                     (vector? v)
+                                     [k (mapv #(if (nil? %) (prn-str %) %) v)]
+                                     
+                                     :else [k v])))
                             (into {})))]
         (print (format "%d / %d\r" (inc n) cnt))
         (recur a' (inc n) (rest d))))))
 
 (defn- prepare-data
   [data]
-  (let [data' (-prepare-data [] (count data) data)]
+  (let [data' (-prepare-data [] 0 (count data) data)]
     (log/info "Data prepared:\t" (with-out-str (pprint data')))
     data'))
 
@@ -104,9 +109,9 @@
   ([da-uri dtlv-uri optm]
    (let [da-conn    (get-datomic-connection da-uri)
          [schema data](try
-                        (let [da-db'      (da/db da-conn)
-                              schema'     (get-schema da-db)
-                              data'       (get-data da-db schema)]
+                        (let [da-db   (da/db da-conn)
+                              schema' (get-schema da-db)
+                              data'   (get-data da-db schema')]
                           [schema' data'])
                         (finally (da/release da-conn)))]
      (let [data'     (prepare-data data)
