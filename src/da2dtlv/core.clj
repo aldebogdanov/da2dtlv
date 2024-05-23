@@ -1,10 +1,9 @@
 (ns da2dtlv.core
   (:require [datomic.api :as da]
             [datalevin.core :as dtlv]
-            [clojure.tools.logging :as log]
             [clojure.tools.cli :refer [parse-opts]]
-            [clojure.pprint :refer [pprint]])
-  (:import [java.util.logging Level Logger])
+            [clojure.pprint :refer [pprint]]
+            [clojure.tools.logging :as log])
   (:gen-class))
 
 (def ^:private schema-query '[:find ?ident ?attr ?value
@@ -45,8 +44,7 @@
                            (if (or (= (name k) "validate")
                                    (empty? v))
                              acc (assoc acc k v)))) {} data)]
-    (log/info  "Schema loaded")
-    (log/debug "Schema:\t" (with-out-str (pprint schema)))
+    (log/info "Schema loaded:\t" (with-out-str (pprint schema)))
     schema))
 
 (defn- create-data-query
@@ -58,23 +56,42 @@
 (defn- get-datomic-connection
   [da-uri]
   (let [da-conn (da/connect da-uri)]
-    (log/info  "Datomic connected")
-    (log/debug "Datomic connection:]\t" (with-out-str (pprint da-conn)))
+    (log/info "Datomic connected:]\t" (with-out-str (pprint da-conn)))
     da-conn))
+
+(defn- -prepare-data
+  [acc num cnt data]
+  (loop [a acc
+         n num
+         d data]
+    (if (empty? d)
+      a
+      (let [a' (conj a (->> (first d)
+                            (map (fn [[k v]]
+                                   (if (and (map? v) (contains? v :db/id))
+                                     [k (:db/id v)]
+                                     [k v])))
+                            (into {})))]
+        (print (format "%d / %d\r" (inc n) cnt))
+        (recur a' (inc n) (rest d))))))
+
+(defn- prepare-data
+  [data]
+  (let [data' (-prepare-data [] (count data) data)]
+    (log/info "Data prepared:\t" (with-out-str (pprint data')))
+    data'))
 
 (defn- get-data
   [da-db schema]
   (let [data-query (create-data-query (keys schema))
         data       (da/q data-query da-db)]
-    (log/info  "Data loaded")
-    (log/debug "Data:\t" (with-out-str (pprint data)))
+    (log/info "Data loaded:\t" (with-out-str (pprint data)))
     data))
 
 (defn- get-datalevin-connection
   [dtlv-uri schema options]
   (let [dtlv-conn (dtlv/get-conn dtlv-uri schema options)]
-    (log/info  "Datalevin connected")
-    (log/debug "Datalevin connection:\t" (with-out-str (pprint dtlv-conn)))
+    (log/info "Datalevin connected:\t" (with-out-str (pprint dtlv-conn)))
     dtlv-conn))
 
 (defn datomic->datalevin
@@ -86,18 +103,21 @@
   ([da-uri dtlv-uri] (datomic->datalevin da-uri dtlv-uri {}))
   ([da-uri dtlv-uri optm]
    (let [da-conn    (get-datomic-connection da-uri)
-         da-db      (da/db da-conn)
-         schema     (get-schema da-db)
-         data       (get-data da-db schema)
-         options    (merge {:validate-data? true :closed-schema? true} optm)
-         dtlv-conn  (get-datalevin-connection dtlv-uri schema options)]
-     (dtlv/transact! dtlv-conn data))))
+         [schema data](try
+                        (let [da-db'      (da/db da-conn)
+                              schema'     (get-schema da-db)
+                              data'       (get-data da-db schema)]
+                          [schema' data'])
+                        (finally (da/release da-conn)))]
+     (let [data'     (prepare-data data)
+           options   (merge {:validate-data? true :closed-schema? true} optm)
+           dtlv-conn (get-datalevin-connection dtlv-uri schema options)]
+       (dtlv/transact! dtlv-conn data')
+       (log/infof "Transfer complete: %d datoms" (count (dtlv/datoms (dtlv/db dtlv-conn) :eav)))))))
 
 (def ^:private cli-options
   [[nil "--no-validate-data" "Set Datalevin database :validate-data? option to false" :id :no-validate-data]
    [nil "--no-closed-schema" "Set Datalevin database :closed-schema? option to false" :id :no-closed-schema]
-   ["-v" "--verbose" "Show detailed log messages" :id :verbose]
-   ["-q" "--quite" "Don't show any output" :id :quite]
    ["-h" "--help" "Show this help" :id :help]])
 
 (defmacro ^:private print-help
@@ -107,21 +127,15 @@
 
 (defn ^:no-doc -main
   [& args]
-  (let [logger (Logger/getLogger "da2dtlv.core")
-        {:keys [options arguments errors summary]} (parse-opts args cli-options)]
+  (let [{:keys [options arguments errors summary]} (parse-opts args cli-options)]
     (cond
       (:help options)            (print-help summary)
       errors                     (do (println "Errors:" errors)
                                      (System/exit 1))
-      (not= 2 (count arguments)) (do (println "Error: provide exactly two arguments!\n")
-                                     (print-help summary)
-                                     (System/exit 1))
-      :else (do
-              (when (:verbose options)
-                (.setLevel logger Level/ALL))
-              (when (:quite options)
-                (.setLevel logger Level/SEVERE))
-              (datomic->datalevin (first arguments)
-                                  (second arguments)
-                                  {:validate-data? (not (:no-validate-data options))
-                                   :closed-schema? (not (:no-closed-schema options))})))))
+      ;; (not= 2 (count arguments)) (do (println "Error: provide exactly two arguments!\n")
+      ;;                                (print-help summary)
+      ;;                                (System/exit 1))
+      :else (datomic->datalevin (first arguments)
+                                (second arguments)
+                                {:validate-data? (not (:no-validate-data options))
+                                 :closed-schema? (not (:no-closed-schema options))}))))

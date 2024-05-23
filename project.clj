@@ -9,7 +9,8 @@
                  [datalevin "0.9.5"]
                  [org.clojure/tools.cli "1.1.230"]
                  [org.clojure/tools.logging "1.3.0"]
-                 [org.slf4j/slf4j-simple "1.7.30"]]
+                 [org.slf4j/slf4j-simple "1.7.3"]
+                 [com.taoensso/timbre "6.5.0"]]
 
   :plugins [[io.taylorwood/lein-native-image "0.3.1"]]
 
