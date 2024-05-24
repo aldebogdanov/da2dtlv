@@ -16,5 +16,6 @@ pom.xml.asc
 
 .emacs.desktop
 .emacs.desktop.lock
-#*#
+\#*#
+.#*
 *~

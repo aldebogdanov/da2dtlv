@@ -17,12 +17,13 @@
                               [?e ?attr ?value]])
 
 (defn- get-schema
-  [da-db]
+  [da-db cnt]
   (let [data (da/q '[:find [(pull ?e [*]) ...]
+                     :in $ ?cnt
                      :where
                      [?e :db/ident]
-                     [(< 71 ?e)]]
-                   da-db)
+                     [(< ?cnt ?e)]]
+                   da-db cnt)
         schema (reduce (fn [acc e]
                          (let [k (:db/ident e)
                                v (as-> e $
@@ -107,21 +108,30 @@
 
   ([da-uri dtlv-uri] (datomic->datalevin da-uri dtlv-uri {}))
   ([da-uri dtlv-uri optm]
-   (let [da-conn    (get-datomic-connection da-uri)
-         [schema data](try
-                        (let [da-db   (da/db da-conn)
-                              schema' (get-schema da-db)
-                              data'   (get-data da-db schema')]
-                          [schema' data'])
-                        (finally (da/release da-conn)))]
+   (let [da-conn       (get-datomic-connection da-uri)
+         optm'         (as-> optm $
+                         (merge {:validate-data? true
+                                 :closed-schema? true
+                                 :system-datoms-count 71} $)
+                         (select-keys $ [:validate-data? :closed-schema? :system-datoms-count]))
+         [schema data] (try
+                         (let [da-db   (da/db da-conn)
+                               schema' (get-schema da-db (:system-datoms-count optm'))
+                               data'   (get-data da-db schema')]
+                           [schema' data'])
+                         (finally (da/release da-conn)))]
      (let [data'     (prepare-data data)
-           options   (merge {:validate-data? true :closed-schema? true} optm)
+           options   (dissoc optm' :system-datoms-count)
            dtlv-conn (get-datalevin-connection dtlv-uri schema options)]
        (dtlv/transact! dtlv-conn data')
        (log/infof "Transfer complete: %d datoms" (count (dtlv/datoms (dtlv/db dtlv-conn) :eav)))))))
 
 (def ^:private cli-options
-  [[nil "--no-validate-data" "Set Datalevin database :validate-data? option to false" :id :no-validate-data]
+  [["-d" "--datoms DATOMS" "Count of system datoms in Datomic database"
+    :default 71
+    :parse-fn #(Integer/parseInt %)
+    :validate [#(<= 0 %) "Must be not a negative number"]]
+   [nil "--no-validate-data" "Set Datalevin database :validate-data? option to false" :id :no-validate-data]
    [nil "--no-closed-schema" "Set Datalevin database :closed-schema? option to false" :id :no-closed-schema]
    ["-h" "--help" "Show this help" :id :help]])
 
@@ -132,15 +142,16 @@
 
 (defn ^:no-doc -main
   [& args]
-  (let [{:keys [options arguments errors summary]} (parse-opts args cli-options)]
+  (let [{:keys [options arguments errors summary] :as m} (parse-opts args cli-options)]
     (cond
       (:help options)            (print-help summary)
       errors                     (do (println "Errors:" errors)
                                      (System/exit 1))
-      ;; (not= 2 (count arguments)) (do (println "Error: provide exactly two arguments!\n")
-      ;;                                (print-help summary)
-      ;;                                (System/exit 1))
+      (not= 2 (count arguments)) (do (println "Error: provide exactly two arguments!\n")
+                                     (print-help summary)
+                                     (System/exit 1))
       :else (datomic->datalevin (first arguments)
                                 (second arguments)
                                 {:validate-data? (not (:no-validate-data options))
-                                 :closed-schema? (not (:no-closed-schema options))}))))
+                                 :closed-schema? (not (:no-closed-schema options))
+                                 :system-datoms-count (:datoms options)}))))
