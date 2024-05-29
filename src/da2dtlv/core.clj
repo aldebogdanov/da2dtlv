@@ -102,7 +102,13 @@
 
 (defn datomic->datalevin
 
-  "Commment"
+  "Transfer last database state of Datomic database located in `da-uri` to Datalevin database located in `dtlv-uri`. Optional options map `optm` can have keys:
+
+  | Option | Description | Default |
+  |--------|-------------|---------|
+  | `:validate-schema?` | `:validate-schema?` option of Datalevin connection | `true` |
+  | `:closed-schema?` | `:closed-schema?` option of Datalevin connection | `true` |
+  | `:system-datoms-count` | Count of datoms in Datomic database, that are system datoms and exists in it from scratch | `71` |"
 
   {:added "0.1.0"}
 
